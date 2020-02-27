@@ -1,0 +1,12 @@
+name: Update Mod Version
+description: "Update the mod version in src/turbot.yml"
+inputs:
+  version:
+    description: "The version to update to"
+    required: true
+  modFilePath:
+    description: "Path to the mod's src/turbot.yml"
+    required: true
+runs:
+  using: "node12"
+  main: "dist/index.js"

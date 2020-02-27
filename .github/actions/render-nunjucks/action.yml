@@ -1,0 +1,15 @@
+name: Render Nunjucks
+description: Render a file using nunjucks
+inputs:
+  renderDataFilePath:
+    description: "Path to the JSON file that contains the render data"
+    required: true
+  inputFilePath:
+    description: "Path to the Markdown file to render"
+    required: true
+  outputFilePath:
+    description: "Path to where the rendered Markdown file should be written"
+    required: true
+runs:
+  using: "node12"
+  main: "dist/index.js"

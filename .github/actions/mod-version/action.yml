@@ -1,0 +1,21 @@
+name: 'Mod Version'
+description: 'Identify the mod release type, based on changes since the last release'
+inputs:
+  masterVersion:
+    description: 'The version of the released version of the mod '
+    required: true
+  workingVersion:
+    description: 'The version of the latest version of the mod '
+    required: true
+  masterInspect:
+    description: 'The inspect result for the released version of the mod'
+    required: true
+  workingInspect:
+    description: 'The inspect result for the latest version of the mod'
+    required: true
+outputs:
+  release:
+    description: 'The release type, on of major, minor, patch'
+runs:
+  using: 'node12'
+  main: 'dist/index.js'

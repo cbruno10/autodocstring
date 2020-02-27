@@ -1,0 +1,46 @@
+name: Mod Release
+on: [pull_request]
+jobs:
+  mod-release:
+    name: Mod Release
+    runs-on: ubuntu-latest
+    env:
+      PROD_REGISTRY: turbot.com
+      STAGING_REGISTRY: turbot-stg.com
+      TURBOT_REGISTRY_USER: ${{ secrets.TURBOT_REGISTRY_USER }}
+      TURBOT_PROD_REGISTRY_PASSWORD: ${{ secrets.TURBOT_PROD_REGISTRY_PASSWORD }}
+      TURBOT_STAGING_REGISTRY_PASSWORD: ${{ secrets.TURBOT_STG_REGISTRY_PASSWORD }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # TODO
+      # NODE_ENV: "production"
+      ref: ${{ github.ref }}
+
+    steps:
+      # TODO set-use env rather than set-output
+      - name: Set output variables
+        id: vars
+        run: |
+          refPrefix=refs/pulls/
+          branch="${ref#$refPrefix}"
+          prefix=cody/
+          mod="${branch#$prefix}"
+          modFolder="packages/${mod}"
+          modFilePath="${modFolder}/src/turbot.yml"
+          echo $branch
+          echo $modFolder
+          echo $modFilePath
+          echo ::set-output name=branch::"${branch}"
+          echo ::set-output name=mod::"${mod}"
+          echo ::set-output name=modFolder::"${modFolder}"
+          echo ::set-output name=modFilePath::"${modFilePath}"
+
+      - name: Checkout pull request branch
+        uses: actions/checkout@v2
+
+      - name: Debug logs
+        run: |
+          pwd
+          ls
+          git branch
+          git fetch origin ${branch} --depth=20
+          git log -n 20

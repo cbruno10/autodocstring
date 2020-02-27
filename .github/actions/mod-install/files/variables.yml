@@ -1,0 +1,5 @@
+input:
+  parent: 'tmod:@turbot/turbot#/'
+  org: turbot
+  mod: aws-ecs
+  version: 5.0.1-rc.20200225085459811

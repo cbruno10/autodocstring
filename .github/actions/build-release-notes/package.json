@@ -1,0 +1,17 @@
+{
+  "name": "build-release-notes",
+  "version": "1.0.0-beta.0",
+  "description": "action to determine the new mod version, based on changes to the md and current version and build release note data",
+  "main": "index.js",
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@actions/core": "^1.2.2",
+    "@octokit/request": "^5.3.1",
+    "csvtojson": "^2.0.10",
+    "fs-extra": "^8.1.0",
+    "js-yaml": "3.13.1",
+    "lodash": "4.17.15",
+    "semver": "^7.1.3"
+  }
+}

@@ -1,0 +1,38 @@
+name: "Build Release Notes"
+description: "Identify the mod release type, based on changes since the last release"
+inputs:
+  masterVersion:
+    description: "The version of the released version of the mod "
+    required: true
+  workingVersion:
+    description: "The version of the latest version of the mod "
+    required: true
+  masterInspect:
+    description: "The inspect result for the released version of the mod"
+    required: true
+  workingInspect:
+    description: "The inspect result for the latest version of the mod"
+    required: true
+  modsIssueNumbers:
+    description: "The turbot_mods issue numbers from commits in the format of #123 #456 #789"
+    required: true
+  githubToken:
+    description: "Secret GitHub token used for authentication"
+    required: true
+  repository:
+    description: "Repository owner and name"
+    required: true
+  releaseNoteRepository:
+    description: "Release note repository owner and name"
+    required: true
+  productionRelease:
+    description: True if building release notes for production, false for dev or staging.
+    required: true
+outputs:
+  version:
+    description: "The new version number"
+  releaseNoteDataYaml:
+    description: "Release note data in YAML format"
+runs:
+  using: "node12"
+  main: "dist/index.js"

@@ -1,0 +1,314 @@
+name: Build Release Notes
+on:
+  push:
+    branches:
+      - "cody2/*"
+jobs:
+  build-release-notes:
+    name: Build release notes
+    runs-on: ubuntu-latest
+    env:
+      PROD_REGISTRY: turbot.com
+      STAGING_REGISTRY: turbot-stg.com
+      TURBOT_REGISTRY_USER: ${{ secrets.TURBOT_REGISTRY_USER }}
+      TURBOT_PROD_REGISTRY_PASSWORD: ${{ secrets.TURBOT_PROD_REGISTRY_PASSWORD }}
+      TURBOT_STAGING_REGISTRY_PASSWORD: ${{ secrets.TURBOT_STG_REGISTRY_PASSWORD }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      ref: ${{ github.ref }}
+
+    steps:
+      # TODO set-use env rather than set-output
+      - name: Set output variables
+        id: vars
+        run: |
+          refPrefix=refs/heads/
+          branch="${ref#$refPrefix}"
+          prefix=cody2/
+          mod="${branch#$prefix}"
+          modFolder="packages/${mod}"
+          modFilePath="${modFolder}/src/turbot.yml"
+          echo $branch
+          echo $modFolder
+          echo $modFilePath
+          echo ::set-output name=branch::"${branch}"
+          echo ::set-output name=mod::"${mod}"
+          echo ::set-output name=modFolder::"${modFolder}"
+          echo ::set-output name=modFilePath::"${modFilePath}"
+
+      - name: Checkout working branch
+        uses: actions/checkout@v2
+
+      - name: Get mod info
+        id: mod-info
+        uses: cumulusds/get-yaml-paths-action@v0.0.3
+        with:
+          file: ${{ steps.vars.outputs.modFilePath  }}
+          title: title
+          version: version
+
+      - name: Checkout master
+        run: |
+          # Don't limit depth since we need all of the history
+          git fetch --no-tags --prune origin +refs/heads/master:refs/remotes/origin/master
+          git switch master
+
+      - name: Mod exists in master
+        id: mod-exists-in-master
+        run: test -f "${modFilePath}" && echo $?
+        env:
+          modFilePath: ${{ steps.vars.outputs.modFilePath }}
+
+      - name: Get master mod info
+        if: steps.mod-exists-in-master == 0
+        id: master-mod-info
+        uses: cumulusds/get-yaml-paths-action@v0.0.3
+        with:
+          file: ${{ steps.vars.outputs.modFilePath  }}
+          title: title
+          version: version
+
+      - name: Print mod info
+        run: |
+          echo ${current-version}
+          echo ${master-version}
+        env:
+          current-version: ${{ steps.mod-info.outputs.version }}
+          master-version: ${{ steps.master-mod-info.outputs.version }}
+
+      - name: Find pull request
+        uses: juliangruber/find-pull-request-action@v1
+        id: find-pull-request
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ steps.vars.outputs.branch }}
+
+      - name: Pull request text
+        if: steps.find-pull-request.outputs.number == ''
+        id: pr-test
+        run: |
+          echo ::set-output name=title::"Mod release candidate for ${GITHUB_REF##*/}"
+          echo ::set-output name=body::"This PR was auto-generated on $(date +%d-%m-%Y)."
+
+      - name: Create pull request
+        if: steps.find-pull-request.outputs.number == ''
+        uses: vsoch/pull-request-action@master
+        env:
+          PULL_REQUEST_TITLE: ${{ steps.pr-test.outputs.title }}
+          PULL_REQUEST_BODY: ${{ steps.pr-test.outputs.body }}
+
+      # TODO check for _WIP_ tag in commit messages and return no changes if so
+      - name: Detect mod changes
+        id: detect-mod-changes
+        # ignore changes to turbot_templates contents.
+        # NOTE - master is already checked out - checkout target branch again when we are done
+        run: |
+          diffs=$(git diff ${branch}...master ${modFolder} ':(exclude)**/turbot_templates/**')
+          echo ::set-output name=mod-changes::"${diffs}"
+        env:
+          branch: ${{ steps.vars.outputs.branch }}
+          modFolder: ${{ steps.vars.outputs.modFolder }}
+
+      - name: Print mod changes
+        run: |
+          echo ${changes}
+        env:
+          changes: ${{ steps.detect-mod-changes.outputs.mod-changes }}
+
+      # TODO get latest CLI version number
+      - name: Download CLI
+        # only run step if there are changes
+        if: steps.detect-mod-changes.outputs.mod-changes != ''
+        uses: fabriciobastian/download-release-asset-action@v1.0.2
+        with:
+          version: latest
+          repository: turbot/cli
+          file: turbot_cli_1.9.0_linux_amd64.zip
+
+      - name: Install CLI
+        # only run step if there are changes
+        if: steps.detect-mod-changes.outputs.mod-changes != ''
+        run: unzip turbot_cli_1.9.0_linux_amd64.zip -d /tmp && chmod +x /tmp/turbot
+
+      - name: Login to registry
+        # only run step if there are changes
+        if: steps.detect-mod-changes.outputs.mod-changes != ''
+        run: |
+          mkdir -p ~/.config/turbot
+          /tmp/turbot login --username ${TURBOT_REGISTRY_USER} --password ${TURBOT_PROD_REGISTRY_PASSWORD} --registry ${PROD_REGISTRY}
+
+      - name: Master branch inspect
+        # only run step if there are changes
+        if: steps.detect-mod-changes.outputs.mod-changes != ''
+        id: master-inspect
+        run: |
+          /tmp/turbot install --dir ${modFolder} --registry ${PROD_REGISTRY}
+          /tmp/turbot inspect --format changelog --dir ${modFolder} > /tmp/master-inspect.csv
+        env:
+          modFolder: ${{ steps.vars.outputs.modFolder }}
+
+      - name: Working branch inspect
+        # only run step if there are changes
+        if: steps.detect-mod-changes.outputs.mod-changes != ''
+        id: working-inspect
+        run: |
+          git switch ${branch}
+          /tmp/turbot install --dir ${modFolder}
+          /tmp/turbot inspect --format changelog --dir ${modFolder} > /tmp/working-inspect.csv
+        env:
+          branch: ${{ steps.vars.outputs.branch }}
+          modFolder: ${{ steps.vars.outputs.modFolder }}
+
+      # Get issue numbers from all commits
+      - name: Get commit issue numbers
+        id: get_commit_issue_nums
+        run: |
+          #refPrefix=refs/heads/
+          #branch="${ref#$refPrefix}"
+          #git fetch --no-tags origin master
+          #git switch master
+          # TODO: Fix this by grabbing the oldest ancestor between this branch and master
+          git fetch origin ${branch} --depth=1000
+          git switch ${branch}
+          git branch
+          git log --no-merges ${branch} ^master --pretty=format:%s > /tmp/issue_nums.txt
+          issueNumbers=$(awk '/ #/{print $NF}' /tmp/issue_nums.txt)
+          echo $issueNumbers
+          echo ::set-output name=issueNumbers::${issueNumbers}
+        env:
+          branch: ${{ steps.vars.outputs.branch }}
+
+      - name: Print get_commit_issue_nums
+        # Only run step if there are turbot-mods issue numbers in commits
+        if: steps.get_commit_issue_nums.outputs.issueNumbers != ''
+        run: |
+          echo "$ISSUE_NUMS"
+        env:
+          ISSUE_NUMS: ${{ steps.get_commit_issue_nums.outputs.issueNumbers}}
+
+      - name: Build release note info
+        # only run step if there are changes
+        if: steps.detect-mod-changes.outputs.mod-changes != ''
+        uses: ./.github/actions/build-release-notes
+        id: build-release-note-info
+        with:
+          workingVersion: ${{ steps.mod-info.outputs.version }}
+          masterVersion: ${{ steps.master-mod-info.outputs.version }}
+          workingInspect: "/tmp/working-inspect.csv"
+          masterInspect: "/tmp/master-inspect.csv"
+          modFilePath: ${{ steps.vars.outputs.modFilePath }}
+          modsIssueNumbers: ${{ steps.get_commit_issue_nums.outputs.issueNumbers}}
+          repository: ${{ github.repository }}
+          releaseNoteRepository: "turbotio/rn"
+          githubToken: ${{ secrets.TURBOT_GITHUB_TOKEN }}
+
+      - name: Print build-release-note-info
+        if: steps.detect-mod-changes.outputs.mod-changes != ''
+        run: |
+          echo ${newVersion}
+          echo "$releaseNoteDataYaml"
+          echo "$releaseNoteDataYaml" > /tmp/${newVersion}.yml
+        env:
+          newVersion: ${{ steps.build-release-note-info.outputs.version }}
+          releaseNoteDataYaml: ${{ steps.build-release-note-info.outputs.releaseNoteDataYaml }}
+
+      # Upload artifact for debugging purposes
+      - name: Upload artifact
+        if: steps.detect-mod-changes.outputs.mod-changes != ''
+        uses: actions/upload-artifact@v1
+        with:
+          name: release-notes
+          path: /tmp/${{ env.newVersion }}.yml
+        env:
+          newVersion: ${{ steps.build-release-note-info.outputs.version }}
+
+      # Update mod version in src/turbot.yml
+      - name: Update mod version
+        if: steps.detect-mod-changes.outputs.mod-changes != ''
+        uses: ./.github/actions/update-mod-version
+        id: update-mod-version
+        with:
+          version: ${{ steps.build-release-note-info.outputs.version }}
+          modFilePath: ${{ steps.vars.outputs.modFilePath  }}
+
+      - name: Print updated mod version
+        if: steps.detect-mod-changes.outputs.mod-changes != ''
+        run: |
+          cat ${modFilePath}
+        env:
+          modFilePath: ${{ steps.vars.outputs.modFilePath  }}
+
+      #  Rewrite release note yaml file
+      - name: git rm previous rc release note files
+        if: steps.detect-mod-changes.outputs.mod-changes != ''
+        run: |
+          releaseNotesPath="${modFolder}/src/release_notes"
+          echo ${releaseNotesPath}
+          find ${modFolder} -type f -name '*-rc.*.yml' | xargs git rm
+        env:
+          modFolder: ${{ steps.vars.outputs.modFolder }}
+
+      - name: Copy and git add release note yml
+        if: steps.detect-mod-changes.outputs.mod-changes != ''
+        run: |
+          releaseNotesPath="${modFolder}/src/release_notes"
+          echo ${releaseNotesPath}
+          cp /tmp/${newVersion}.yml ${releaseNotesPath}/${newVersion}.yml
+          cat ${releaseNotesPath}/${newVersion}.yml
+          git add ${releaseNotesPath}/${newVersion}.yml
+          git status
+        env:
+          modFolder: ${{ steps.vars.outputs.modFolder }}
+          newVersion: ${{ steps.build-release-note-info.outputs.version }}
+
+      - name: Compose mod for release note rendering
+        if: steps.detect-mod-changes.outputs.mod-changes != ''
+        id: compose-mod-release-notes
+        run: |
+          /tmp/turbot compose --dir ${modFolder}
+        env:
+          modFolder: ${{ steps.vars.outputs.modFolder }}
+
+      # Render and rewrite release note markdown file
+      # Need to do this after writing the release note YAML file since compose
+      # will use that file, which we need for render data
+      - name: Render release notes markdown and write to file
+        if: steps.detect-mod-changes.outputs.mod-changes != ''
+        uses: ./.github/actions/render-nunjucks
+        with:
+          renderDataFilePath: ${{ env.modFolder }}/turbot.head.json
+          inputFilePath: "release-notes-template.md"
+          outputFilePath: ${{ env.modFolder }}/RELEASE_NOTES.md
+        env:
+          modFolder: ${{ steps.vars.outputs.modFolder }}
+
+      - name: Print rendered release notes
+        if: steps.detect-mod-changes.outputs.mod-changes != ''
+        run: |
+          cat ${modFolder}/RELEASE_NOTES.md
+        env:
+          modFolder: ${{ steps.vars.outputs.modFolder }}
+
+      - name: git add release note markdown and src/turbot.yml
+        if: steps.detect-mod-changes.outputs.mod-changes != ''
+        run: |
+          releaseNotesPath="${modFolder}/RELEASE_NOTES.md"
+          echo ${releaseNotesPath}
+          git add ${releaseNotesPath}
+          echo ${modFilePath}
+          git add ${modFilePath}
+          git status
+        env:
+          modFolder: ${{ steps.vars.outputs.modFolder }}
+          modFilePath: ${{ steps.vars.outputs.modFilePath  }}
+
+      # Commit all file changes above and turbot.yml changes
+      - name: Commit and push turbot.yml
+        if: steps.detect-mod-changes.outputs.mod-changes != ''
+        uses: github-actions-x/commit@v2.3
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          push-branch: ${{ steps.vars.outputs.branch }}
+          commit-message: "${{ steps.vars.outputs.mod }} ${{ steps.build-release-note-info.outputs.version }}"
+          # TODO: Who is the author and what's the message?
+          name: "GitHub Action"
+          email: "action@github.com"

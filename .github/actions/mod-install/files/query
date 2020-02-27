@@ -1,0 +1,11 @@
+
+mutation InstallMod($input: InstallModInput!)
+{
+  mod: installMod(input: $input)
+  {
+    turbot {
+      id
+
+    }
+  }
+}

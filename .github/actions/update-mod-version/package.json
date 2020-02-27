@@ -1,0 +1,12 @@
+{
+  "name": "update-mod-version",
+  "version": "1.0.0-beta.0",
+  "description": "action to update the mod version",
+  "main": "index.js",
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@actions/core": "^1.2.2",
+    "fs-extra": "^8.1.0"
+  }
+}

@@ -1,0 +1,21 @@
+name: 'Mod Install'
+description: 'Identify the mod release type, based on changes since the last release'
+inputs:
+  mod:
+    description: 'The mod to install'
+    required: true
+  version:
+    description: 'The version of the mod to install'
+    required: true
+  secretKey:
+    description: 'The secret key of the turbot staging environment'
+    required: true
+  accessKey:
+    description: 'The access key of the turbot staging environment'
+    required: true
+  workspace:
+    description: 'The workspace name of the turbot staging environment'
+    required: true
+runs:
+  using: 'node12'
+  main: 'dist/index.js'

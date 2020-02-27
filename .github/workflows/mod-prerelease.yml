@@ -1,0 +1,211 @@
+name: Mod Prerelease
+on:
+  push:
+    branches:
+      - 'wip/*'
+jobs:
+  mod-prerelease:
+    name: Mod Prerelease
+    runs-on: ubuntu-latest
+    env:
+      PROD_REGISTRY: turbot.com
+      STAGING_REGISTRY: turbot-stg.com
+      TURBOT_REGISTRY_USER: ${{ secrets.TURBOT_REGISTRY_USER }}
+      TURBOT_PROD_REGISTRY_PASSWORD: ${{ secrets.TURBOT_PROD_REGISTRY_PASSWORD }}
+      TURBOT_STAGING_REGISTRY_PASSWORD: ${{ secrets.TURBOT_STG_REGISTRY_PASSWORD }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+#      TODO
+#      NODE_ENV: "production"
+      ref: ${{ github.ref }}
+
+    steps:
+      # TODO set-use env rather than set-output
+      - name: Set output variables
+        id: vars
+        run: |
+          refPrefix=refs/heads/
+          branch="${ref#$refPrefix}"
+          prefix=wip/
+          mod="${branch#$prefix}"
+          modFolder="packages/${mod}"
+          modFilePath="${modFolder}/src/turbot.yml"
+          echo $branch
+          echo $modFolder
+          echo $modFilePath
+          echo ::set-output name=branch::"${branch}"
+          echo ::set-output name=mod::"${mod}"
+          echo ::set-output name=modFolder::"${modFolder}"
+          echo ::set-output name=modFilePath::"${modFilePath}"
+      - name: Checkout working branch
+        uses: actions/checkout@v2
+      - name: Get mod info
+        id: mod-info
+        uses: cumulusds/get-yaml-paths-action@v0.0.3
+        with:
+          file: ${{ steps.vars.outputs.modFilePath  }}
+          title: title
+          version: version
+      - name: Checkout master
+        run: |
+          git fetch --no-tags --prune --depth=1 origin +refs/heads/master:refs/remotes/origin/master
+          git checkout master
+      - name: Mod exists in master
+        id: mod-exists-in-master
+        run: test -f "${modFilePath}" && echo $?
+        env:
+          modFilePath: ${{ steps.vars.outputs.modFilePath }}
+      - name: Get master mod info
+        if: steps.mod-exists-in-master == 0
+        id: master-mod-info
+        uses: cumulusds/get-yaml-paths-action@v0.0.3
+        with:
+          file: ${{ steps.vars.outputs.modFilePath  }}
+          title: title
+          version: version
+      - name: Print mod info
+        run: |
+          echo ${changes}
+        env:
+          current-version:  ${{ steps.mod-info.outputs.version }}
+          master-version:  ${{ steps.master-mod-info.outputs.version }}
+      - name: Find pull request
+        uses: juliangruber/find-pull-request-action@v1
+        id: find-pull-request
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ steps.vars.outputs.branch }}
+      - name: Pull request text
+        if: steps.find-pull-request.outputs.number == ''
+        id: pr-test
+        run: |
+          echo ::set-output name=title::"Mod release candidate for ${GITHUB_REF##*/}"
+          echo ::set-output name=body::"This PR was auto-generated on $(date +%d-%m-%Y)."
+#      - name: Create pull request
+#        if: steps.find-pull-request.outputs.number == ''
+#        uses: vsoch/pull-request-action@master
+#        env:
+#          PULL_REQUEST_TITLE: ${{ steps.pr-test.outputs.title }}
+#          PULL_REQUEST_BODY: ${{ steps.pr-test.outputs.body }}
+      # TODO check for _WIP_ tag in commit messages and return no changes if so
+      - name: Detect mod changes
+        id: detect-mod-changes
+        # TODO we should ignore commits by this workflow - otherwise version changes will be included
+
+        # ignore changes to turbot_templates contents.
+        # NOTE - master is already checked out - checkout target branch again when we are done
+        run: |
+          diffs=$(git diff ${branch}...master ${modFolder} ':(exclude)**/turbot_templates/**')
+          echo ::set-output name=mod-changes::"${diffs}"
+        env:
+          branch:  ${{ steps.vars.outputs.branch }}
+          modFolder:  ${{ steps.vars.outputs.modFolder }}
+      - name: CLI version
+        # TODO get latest release version
+        run: |
+          echo ::set-env name=CLI_VERSION::"1.8.0"
+      - name: CLI release file
+        run: |
+          echo ::set-env name=CLI_RELEASE_FILE::"turbot_cli_${CLI_VERSION}_linux_amd64.zip"
+      - name: Download CLI
+        # only run step if there are changes
+        if: steps.detect-mod-changes.outputs.mod-changes != ''
+        uses: fabriciobastian/download-release-asset-action@v1.0.2
+        with:
+          version: ${{env.CLI_VERSION}}
+          repository: turbot/cli
+          file: ${{env.CLI_RELEASE_FILE}}
+      - name: Install CLI
+        # only run step if there are changes
+        if: steps.detect-mod-changes.outputs.mod-changes != ''
+        run: |
+          cd .github/cli
+          unzip * -d /tmp
+          chmod +x /tmp/turbot
+#        run: unzip ${CLI_RELEASE_FILE} -d /tmp && chmod +x /tmp/turbot
+      - name: Login to registry
+        # only run step if there are changes
+        if: steps.detect-mod-changes.outputs.mod-changes != ''
+        run: |
+          mkdir -p ~/.config/turbot
+          /tmp/turbot login --username ${TURBOT_REGISTRY_USER} --password ${TURBOT_PROD_REGISTRY_PASSWORD} --registry ${PROD_REGISTRY}
+      - name: Master branch inspect
+        # only run step if there are changes
+        if: steps.detect-mod-changes.outputs.mod-changes != ''
+        id: master-inspect
+        run: |
+          /tmp/turbot install --dir ${modFolder} --registry ${PROD_REGISTRY}
+          /tmp/turbot inspect --format changelog --dir ${modFolder} > /tmp/master-inspect.csv
+        env:
+          modFolder: ${{ steps.vars.outputs.modFolder }}
+      - name: Working branch inspect
+        # only run step if there are changes
+        if: steps.detect-mod-changes.outputs.mod-changes != ''
+        id: working-inspect
+        run: |
+          git checkout ${branch}
+          /tmp/turbot install --dir ${modFolder}
+          /tmp/turbot inspect --format changelog --dir ${modFolder} > /tmp/working-inspect.csv
+        env:
+          branch: ${{ steps.vars.outputs.branch }}
+          modFolder: ${{ steps.vars.outputs.modFolder }}
+      - name: Update mod version
+        # only run step if there are changes
+        if: steps.detect-mod-changes.outputs.mod-changes != ''
+        uses: ./.github/actions/mod-version
+        id: mod-version
+        with:
+          workingVersion: ${{ steps.mod-info.outputs.version }}
+          masterVersion: ${{ steps.master-mod-info.outputs.version }}
+          workingInspect: "/tmp/master-inspect.csv"
+          masterInspect: "/tmp/working-inspect.csv"
+          modFilePath: ${{ steps.vars.outputs.modFilePath }}
+      - name: Pull origin
+        # only run step if there are changes
+        if: steps.detect-mod-changes.outputs.mod-changes != ''
+        run: git pull origin ${branch}
+        env:
+          branch: ${{ steps.vars.outputs.branch }}
+      - name: Commit and push turbot.yml
+        # only run step if there are changes
+        if: steps.detect-mod-changes.outputs.mod-changes != ''
+        uses: github-actions-x/commit@v2.3
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          push-branch: ${{ steps.vars.outputs.branch }}
+          commit-message: "${{ steps.vars.outputs.mod }} ${{ steps.mod-version.outputs.version }}"
+          files: ${{ steps.vars.outputs.modFilePath }}
+          name: "GitHub Action"
+          email: "action@github.com"
+      - name: Install npm packages for turbot-mods
+        if: steps.detect-mod-changes.outputs.mod-changes != ''
+        run: |
+          npm i
+          npm i --prefix packages/turbot-utils
+      - name: Publish mod to staging
+        if: steps.detect-mod-changes.outputs.mod-changes != ''
+        # TODO  --dir ${modFolder}  does not work for publish at present
+        run: |
+          cd ${modFolder}
+          /tmp/turbot publish --wait --registry ${STAGING_REGISTRY} --username ${TURBOT_REGISTRY_USER} --password ${TURBOT_STAGING_REGISTRY_PASSWORD}
+          cd -
+        env:
+          modFolder: ${{ steps.vars.outputs.modFolder }}
+      - name: Install mod to staging env
+        # only run step if there are changes
+        if: steps.detect-mod-changes.outputs.mod-changes != ''
+        uses: ./.github/actions/mod-install
+        id: mod-install
+        with:
+          mod: aws-ecs
+          version: ${{ steps.mod-version.outputs.version }}
+          timeout: 900
+          accessKey: ${{ secrets.TURBOT_STG_ACCESS_KEY}}
+          secretKey: ${{ secrets.TURBOT_STG_SECRET_KEY}}
+          workspace: ${{ secrets.TURBOT_STG_WORKSPACE}}
+
+#      name: Run integration tests
+#        run: ./.github/actions/mod-integration-tests/mod-integration-tests.sh ${mod} ${modFolder}
+#        env:
+#          mod: ${{ steps.vars.outputs.mod }}
+#          modDir: ${{ steps.vars.outputs.modFolder }}
+
